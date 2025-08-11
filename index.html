@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Gateways — Game of Science (6x6 • coords + history • dark, v3.4)</title>
+<style>
+  :root{
+    --board-size: 620px;
+    --cell: calc(var(--board-size) / 6);
+    /* Dark theme palette */
+    --bg: #0b1020;
+    --panel: #111827;
+    --panel-border: #1f2937;
+    --muted: #9ca3af;
+    --text: #e5e7eb;
+    --accent: #22d3ee; /* cyan */
+
+    /* piece tints (woody, dull) */
+    --human1: #2b3e5c; /* navy wood base */
+    --human2: #1e3050; /* shade */
+    --cpu1:   #5b2a2a; /* burgundy wood base */
+    --cpu2:   #461f1f; /* shade */
+
+    --grain1: rgba(255,255,255,.035);
+    --grain2: rgba(0,0,0,.055);
+
+    --gate-green: rgba(16,185,129,0.22);  /* emerald */
+    --gate-orange: rgba(249,115,22,0.22); /* orange */
+    --gate-purple: rgba(168,85,247,0.22); /* violet */
+
+    --hl: rgba(34,211,238,.55);
+
+    /* Lighter dark squares for visibility */
+    --cell-a: #35527f;
+    --cell-b: #406093;
+    --cell-border: #5b79a8;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,"Noto Sans",sans-serif}
+  .app{max-width:1120px;margin:24px auto;padding:16px;display:grid;grid-template-columns: var(--board-size) 1fr;gap:18px}
+
+  .board-wrap{position:relative;padding-left:34px;padding-top:26px}
+  .board{width:var(--board-size);height:var(--board-size);display:grid;grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(6,1fr);background:#0f172a;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.45);overflow:visible;border:1px solid var(--panel-border);position:relative}
+  .cell{position:relative;border:1px solid var(--cell-border);background:var(--cell-a)}
+  .cell:nth-child(odd){background:var(--cell-b)}
+  .cell[data-gatecolor="green"]::after{content:"";position:absolute;inset:0;background:var(--gate-green)}
+  .cell[data-gatecolor="orange"]::after{content:"";position:absolute;inset:0;background:var(--gate-orange)}
+  .cell[data-gatecolor="purple"]::after{content:"";position:absolute;inset:0;background:var(--gate-purple)}
+
+  .coords{position:absolute;inset:0;pointer-events:none}
+  .coord{position:absolute;font-size:12px;color:var(--muted)}
+  .coord.top{transform:translate(-50%,-8px)}
+  .coord.left{transform:translate(-8px,-50%)}
+
+  /* Wood, 3D-ish pieces */
+  .piece{position:absolute;display:flex;align-items:center;justify-content:center;color:#fff;user-select:none;cursor:pointer;transition:left .28s ease, top .28s ease, transform .18s ease, box-shadow .22s ease, filter .24s ease; overflow:hidden;border:1px solid rgba(255,255,255,.06)}
+  .piece::before{content:"";position:absolute;inset:0;background:radial-gradient(140% 110% at 25% 15%, rgba(255,255,255,.22), rgba(255,255,255,0) 55%);mix-blend-mode:screen;pointer-events:none}
+  .piece::after{content:"";position:absolute;left:8%;right:8%;bottom:-8%;height:20%;background:radial-gradient(70% 100% at 50% 0%, rgba(0,0,0,.45), rgba(0,0,0,0));filter:blur(4px);pointer-events:none}
+  .piece.human{
+    background:
+      radial-gradient(120% 100% at 25% 20%, rgba(255,255,255,.12), rgba(255,255,255,0) 55%),
+      repeating-linear-gradient(24deg, var(--grain1) 0 2px, var(--grain2) 2px 5px),
+      linear-gradient(145deg, var(--human1), var(--human2));
+    background-blend-mode: overlay, multiply, normal;
+    box-shadow: 0 10px 24px rgba(0,0,0,.45), inset 0 -10px 18px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06);
+    filter: saturate(.98) brightness(1.02);
+  }
+  .piece.cpu{
+    background:
+      radial-gradient(120% 100% at 25% 20%, rgba(255,255,255,.10), rgba(255,255,255,0) 55%),
+      repeating-linear-gradient(24deg, var(--grain1) 0 2px, var(--grain2) 2px 5px),
+      linear-gradient(145deg, var(--cpu1), var(--cpu2));
+    background-blend-mode: overlay, multiply, normal;
+    box-shadow: 0 10px 24px rgba(0,0,0,.45), inset 0 -10px 18px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06);
+    filter: saturate(.98) brightness(1.02);
+  }
+  .piece.selected{outline:3px solid var(--hl);outline-offset:2px;transform:translateY(-1px) scale(1.02)}
+  .piece.home{opacity:.92; cursor:default; pointer-events:none; filter:saturate(85%)}
+
+  @keyframes cpuMovePulse{0%{transform:translateY(0) scale(1)}50%{transform:translateY(-2px) scale(1.04)}100%{transform:translateY(0) scale(1)}}
+  .piece.cpu-anim{box-shadow:0 0 0 3px rgba(34,211,238,.3), 0 12px 30px rgba(0,0,0,.55), inset 0 -10px 18px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.04); animation: cpuMovePulse .36s ease}
+
+  /* Shapes */
+  .shape-circle{border-radius:50%}
+  .shape-square{border-radius:12px}
+  .shape-triangle{clip-path: polygon(50% 8%, 92% 92%, 8% 92%)}
+  .shape-diamond{clip-path: polygon(50% 6%, 94% 50%, 50% 94%, 6% 50%)}
+
+  .dest{position:absolute;border-radius:12px;border:3px dashed var(--hl);background:rgba(34,211,238,.08);cursor:pointer}
+  .dest:hover{background:rgba(34,211,238,.16)}
+
+  .off-btn{position:absolute;z-index:20;padding:8px 10px;border-radius:10px;border:none;background:var(--accent);color:#001018;font-weight:800;cursor:pointer;box-shadow:0 6px 16px rgba(34,211,238,.35)}
+
+  .panel{background:var(--panel);border:1px solid var(--panel-border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.4);padding:16px;display:flex;flex-direction:column;gap:12px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .btn{padding:8px 10px;border-radius:10px;border:1px solid var(--panel-border);background:#0b1527;color:var(--text);cursor:pointer}
+
+  .moves{height:500px;overflow:auto;border:1px dashed var(--panel-border);border-radius:12px;padding:8px;background:#0b1527;font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace}
+  .mv{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:8px}
+  .mv:nth-child(odd){background:#0e1a31}
+  .sym{display:inline-block;width:16px;height:16px;line-height:16px;text-align:center;border-radius:3px;font-size:12px}
+  .sym.h{color:#cfe2ff}
+  .sym.c{color:#ffd1d1}
+  .mv .who{font-size:11px;color:var(--muted);margin-right:4px}
+  .mv .path{font-weight:700}
+
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#0b1527;color:var(--text);border:1px solid var(--panel-border);padding:10px 14px;border-radius:12px;opacity:0;pointer-events:none;transition:opacity .2s ease}
+  .toast.show{opacity:1}
+
+  /* Ripple marker for CPU moves */
+  @keyframes ripple{0%{transform:scale(.85);opacity:.9}100%{transform:scale(1.12);opacity:0}}
+  .ripple{position:absolute;border:2px solid var(--accent);border-radius:12px;opacity:.85;animation:ripple .5s ease-out forwards;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="board-wrap">
+    <div id="board" class="board" aria-label="6x6 board"></div>
+    <div id="coords" class="coords" aria-hidden="true"></div>
+    <button id="offBtn" class="off-btn" style="display:none">OFF</button>
+  </div>
+  <div class="panel">
+    <div class="row"><button class="btn" id="resetBtn">Reset</button></div>
+    <div id="moves" class="moves" aria-live="polite"></div>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script>
+(function(){
+  // ====== CONFIG ======
+  const N = 6; // board size
+  const HUMAN_DIR = {back:-1}; // human "backward" = north (r-1)
+  const CPU_DIR = {back:+1};   // cpu "backward" = east (c+1)
+  const LETTERS = ['A','B','C','D','E','F'];
+
+  const SHAPE_TO_COLOR = { circle:'green', square:'orange', triangle:'purple' }; // blocker has no color/gate
+  const COLORS = ['green','orange','purple'];
+  const SHAPE_SYM = { circle:'●', square:'■', triangle:'▲', blocker:'◆' };
+
+  // ====== UTIL ======
+  const idx = (r,c)=> (r*N+c);
+  const toRC = (i)=> [Math.floor(i/N), i%N];
+  const inBounds = (r,c)=> r>=0 && r<N && c>=0 && c<N;
+  const coord = (i)=>{ const [r,c]=toRC(i); return `${LETTERS[c]}${r+1}`; };
+  const MID3 = [Math.floor(N/2)-1, Math.floor(N/2), Math.floor(N/2)+1]; // [2,3,4] for N=6
+  const manhattan = (a,b)=>{ const [r1,c1]=toRC(a), [r2,c2]=toRC(b); return Math.abs(r1-r2)+Math.abs(c1-c2); };
+
+  function findPieceAt(i){ const p = PIECES.find(p=> state.pos[p.id]===i ); return p? p.id : null; }
+
+  // ====== STATE / DOM ======
+  const boardEl = document.getElementById('board');
+  const coordsEl = document.getElementById('coords');
+  const toastEl = document.getElementById('toast');
+  const offBtn  = document.getElementById('offBtn');
+  const resetBtn= document.getElementById('resetBtn');
+  const movesEl = document.getElementById('moves');
+
+  const cells = [];
+  for(let r=0;r<N;r++){
+    for(let c=0;c<N;c++){
+      const cell = document.createElement('div');
+      cell.className = 'cell'; cell.dataset.r=r; cell.dataset.c=c; cell.dataset.i=idx(r,c);
+      // color the three South gates (human exits) and three West gates (cpu exits)
+      if(r===N-1 && MID3.includes(c)){
+        const color = COLORS[MID3.indexOf(c)];
+        cell.dataset.gatecolor = color;
+      }
+      if(c===0 && MID3.includes(r)){
+        const color = COLORS[MID3.indexOf(r)];
+        cell.dataset.gatecolor = cell.dataset.gatecolor? cell.dataset.gatecolor : color;
+      }
+      boardEl.appendChild(cell); cells.push(cell);
+    }
+  }
+
+  // Build axis labels
+  function buildCoords(){
+    coordsEl.innerHTML='';
+    const cw = boardEl.clientWidth/6, ch = boardEl.clientHeight/6;
+    // top letters A-F
+    for(let c=0;c<6;c++){
+      const span = document.createElement('div');
+      span.className='coord top';
+      span.style.left = (boardEl.offsetLeft + cw*c + cw/2) + 'px';
+      span.style.top  = (boardEl.offsetTop - 6) + 'px';
+      span.textContent = LETTERS[c];
+      coordsEl.appendChild(span);
+    }
+    // left numbers 1-6
+    for(let r=0;r<6;r++){
+      const span = document.createElement('div');
+      span.className='coord left';
+      span.style.left = (boardEl.offsetLeft - 6) + 'px';
+      span.style.top  = (boardEl.offsetTop + ch*r + ch/2) + 'px';
+      span.textContent = (r+1);
+      coordsEl.appendChild(span);
+    }
+  }
+
+  // Gate lookup per side/color -> cell index
+  const HUMAN_GATES = { green: idx(N-1, MID3[0]), orange: idx(N-1, MID3[1]), purple: idx(N-1, MID3[2]) };
+  const CPU_GATES   = { green: idx(MID3[0], 0),   orange: idx(MID3[1], 0),   purple: idx(MID3[2], 0) };
+  const HUMAN_GATE_SET = new Set(Object.values(HUMAN_GATES));
+  const CPU_GATE_SET   = new Set(Object.values(CPU_GATES));
+
+  function gateFor(pid){
+    const p = PIECES.find(p=>p.id===pid);
+    if(!p || p.shape==='blocker') return null;
+    const color = SHAPE_TO_COLOR[p.shape];
+    return p.side==='H'? HUMAN_GATES[color] : CPU_GATES[color];
+  }
+
+  // Pieces definition (4 per side): circle, square, triangle, blocker(diamond)
+  const PIECES = [
+    {id:'H_CIR', side:'H', shape:'circle'},
+    {id:'H_SQ',  side:'H', shape:'square'},
+    {id:'H_TRI', side:'H', shape:'triangle'}, // NEW: king-like; on cooldown only backward (3 dirs); backward capture -> send to start
+    {id:'H_BLK', side:'H', shape:'blocker'},
+
+    {id:'C_CIR', side:'C', shape:'circle'},
+    {id:'C_SQ',  side:'C', shape:'square'},
+    {id:'C_TRI', side:'C', shape:'triangle'}, // NEW symmetric
+    {id:'C_BLK', side:'C', shape:'blocker'}
+  ];
+
+  // Starting positions (spread top/right)
+  const startPos = {
+    H_CIR: idx(0,1), H_SQ: idx(0,2), H_TRI: idx(0,3), H_BLK: idx(0,4),
+    C_CIR: idx(1,5), C_SQ: idx(2,5), C_TRI: idx(3,5), C_BLK: idx(4,5)
+  };
+
+  const state = {
+    pos: Object.fromEntries(PIECES.map(p=>[p.id, startPos[p.id]])),
+    turn: 'H',
+    last: {H:null, C:null}, // for non-blocker cooldown ("can't move same piece twice in a row")
+    blockerCooldown: {H:0, C:0}, // imposed when opponent relocates your blocker off a gate
+    history: new Map(),
+    over: false,
+    exitGate: Object.fromEntries(PIECES.map(p=>[p.id, null])) // remember where each piece exited
+  };
+
+  const pieceEl = Object.fromEntries(PIECES.map(p=>[p.id, mkPiece(p)]));
+
+  // ====== RENDER ======
+  function mkPiece(p){
+    const el = document.createElement('div');
+    el.className = `piece ${p.side==='H'?'human':'cpu'} shape-${p.shape==='blocker'?'diamond':p.shape}`;
+    el.setAttribute('role','button');
+    el.setAttribute('aria-label', `${p.side==='H'?'Human':'CPU'} ${p.shape}`);
+    boardEl.appendChild(el);
+    el.addEventListener('click', ()=>{
+      if(state.over) return;
+      if(state.turn!=='H') return; // human acts only on human turn
+      if(p.side==='H'){
+        if(state.pos[p.id]!==null) highlightSelection(p.id, 'H', false);
+        return;
+      }
+      if(p.id==='C_BLK' && cpuBlockerOnHumanGate()){
+        highlightSelection('C_BLK', 'H', true);
+      }
+    });
+    return el;
+  }
+
+  function placePieceElement(el, i){
+    const cell = cells[i];
+    el.style.left = (cell.offsetLeft + 6) + 'px';
+    el.style.top  = (cell.offsetTop  + 6) + 'px';
+    el.style.width = `calc(var(--cell) - 12px)`;
+    el.style.height= `calc(var(--cell) - 12px)`;
+  }
+
+  function placeHomeElement(el, gateIndex){
+    const [r,c] = toRC(gateIndex);
+    const cell = cells[gateIndex];
+    const pieceW = (boardEl.clientWidth/6) - 12;
+    let left = cell.offsetLeft + 6;
+    let top  = cell.offsetTop  + 6;
+    if(r===N-1){ // south edge -> below
+      top = cell.offsetTop + (boardEl.clientHeight/6) + 12;
+    } else if(c===0){ // west edge -> left
+      left = cell.offsetLeft - pieceW - 12;
+    }
+    el.style.left = left + 'px';
+    el.style.top  = top  + 'px';
+    el.style.width = `calc(var(--cell) - 12px)`;
+    el.style.height= `calc(var(--cell) - 12px)`;
+  }
+
+  function render(){
+    PIECES.forEach(p=>{
+      const el = pieceEl[p.id];
+      const i = state.pos[p.id];
+      const gateIdx = state.exitGate[p.id];
+      if(i===null && gateIdx!==null){
+        el.classList.add('home');
+        placeHomeElement(el, gateIdx);
+        el.style.display = 'block';
+      } else if(i!==null){
+        el.classList.remove('home');
+        placePieceElement(el, i);
+        el.style.display = 'block';
+      } else {
+        el.style.display = 'none';
+      }
+    });
+    buildCoords();
+  }
+
+  function showToast(msg, ms=1200){ toastEl.textContent=msg; toastEl.classList.add('show'); setTimeout(()=>toastEl.classList.remove('show'), ms); }
+
+  function addStartLine(side){
+    const line = document.createElement('div'); line.className='mv';
+    const who = document.createElement('span'); who.className='who'; who.textContent = 'Start';
+    const path = document.createElement('span'); path.className='path'; path.textContent = side==='H' ? 'Human' : 'CPU';
+    line.appendChild(who); line.appendChild(path); movesEl.appendChild(line); movesEl.scrollTop = movesEl.scrollHeight;
+  }
+
+  function addMoveLine({side, pid, from, to, kind, oppControl, note}){
+    const p = PIECES.find(x=>x.id===pid);
+    const line = document.createElement('div'); line.className='mv';
+    const sym = document.createElement('span'); sym.className=`sym ${side==='H'?'h':'c'}`; sym.textContent = SHAPE_SYM[p.shape];
+    const who = document.createElement('span'); who.className='who'; who.textContent = side==='H'?'H':'CPU';
+    const path = document.createElement('span'); path.className='path';
+    if(kind==='off'){
+      path.textContent = `${coord(from)} → OFF`;
+    } else {
+      path.textContent = `${coord(from)} → ${coord(to)}` + (oppControl? ' (opp blocker)' : '');
+    }
+    if(note){ const n=document.createElement('span'); n.style.marginLeft='6px'; n.style.color='#a7f3d0'; n.textContent = `• ${note}`; line.appendChild(n); }
+    line.appendChild(sym); line.appendChild(who); line.appendChild(path);
+    movesEl.appendChild(line);
+    movesEl.scrollTop = movesEl.scrollHeight;
+  }
+
+  function positionKey(){
+    const arr = PIECES.map(p=> state.pos[p.id]===null? 'x' : String(state.pos[p.id]));
+    return [
+      arr.join(','),
+      state.turn,
+      state.last.H||'_', state.last.C||'_',
+      state.blockerCooldown.H||0, state.blockerCooldown.C||0
+    ].join('|');
+  }
+  function updateHistory(){ const k=positionKey(); state.history.set(k,(state.history.get(k)||0)+1); }
+  function threefold(){ const k=positionKey(); return (state.history.get(k)||0)>=3; }
+
+  function reset(){
+    Object.keys(state.pos).forEach(id=> state.pos[id]=startPos[id]);
+    state.last={H:null,C:null}; state.blockerCooldown={H:0,C:0}; state.history=new Map(); state.over=false;
+    state.exitGate = Object.fromEntries(PIECES.map(p=>[p.id, null]));
+    state.turn = Math.random() < 0.5 ? 'H' : 'C';
+    offBtn.style.display='none'; clearHighlights(); movesEl.innerHTML=''; render();
+    addStartLine(state.turn);
+    updateHistory();
+    if(state.turn==='C') setTimeout(cpuTurn, 350);
+  }
+
+  // ====== RULES ======
+  function piecesOnBoard(side){ return PIECES.filter(p=>p.side===side && p.shape!=='blocker' && state.pos[p.id]!==null).length; }
+  function onCooldown(pid){
+    const p = PIECES.find(x=>x.id===pid); if(!p) return false; if(p.shape==='blocker') return false;
+    const count = piecesOnBoard(p.side);
+    if(count<=1) return false; // waive cooldown if it's the last non-blocker piece
+    return state.last[p.side] === pid;
+  }
+
+  function canExit(pid){
+    const p = PIECES.find(x=>x.id===pid);
+    if(!p || p.shape==='blocker') return false;
+    if(onCooldown(pid)) return false; // cannot exit on cooldown
+    const gate = gateFor(pid);
+    return gate!==null && state.pos[pid]===gate;
+  }
+
+  function cellOccupied(i){ return PIECES.some(p=> state.pos[p.id]===i ); }
+
+  function isOpponentGateFor(side, i){ return side==='H'? CPU_GATE_SET.has(i) : HUMAN_GATE_SET.has(i); }
+  function isOwnPieceAt(side, i){ const pid = findPieceAt(i); if(!pid) return false; return pid.startsWith(side+'_'); }
+
+  // Backward now includes three directions
+  function isBackwardMove(side, from, to){
+    const [r,c]=toRC(from), [nr,nc]=toRC(to);
+    if(side==='H'){
+      return (nr===r-1 && (nc===c-1 || nc===c || nc===c+1));
+    } else {
+      return (nc===c+1 && (nr===r-1 || nr===r || nr===r+1));
+    }
+  }
+
+  function humanTriangleNeighbors(i){
+    const [r,c]=toRC(i); const nn=[];
+    for(let dr=-1; dr<=1; dr++) for(let dc=-1; dc<=1; dc++){
+      if(dr===0 && dc===0) continue; const nr=r+dr, nc=c+dc; if(inBounds(nr,nc)){ const di=idx(nr,nc); if(!isOpponentGateFor('H', di)) nn.push(di); }
+    }
+    return nn;
+  }
+  function cpuTriangleNeighbors(i){
+    const [r,c]=toRC(i); const nn=[];
+    for(let dr=-1; dr<=1; dr++) for(let dc=-1; dc<=1; dc++){
+      if(dr===0 && dc===0) continue; const nr=r+dr, nc=c+dc; if(inBounds(nr,nc)){ const di=idx(nr,nc); if(!isOpponentGateFor('C', di)) nn.push(di); }
+    }
+    return nn;
+  }
+
+  // Human non-blockers (except triangle): no north; CPU non-blockers (except triangle): no east.
+  // Non-blockers may NOT enter opponent gate cells. Only blockers may.
+  function legalHumanMovesOwn(pid){
+    const p = PIECES.find(x=>x.id===pid); const i=state.pos[pid]; if(i===null) return [];
+    if(p.shape==='blocker'){
+      if(state.blockerCooldown['H']>0) return [];
+      const all=[]; for(let j=0;j<N*N;j++){ if(j!==i && !cellOccupied(j)) all.push(j); } return all;
+    }
+    if(p.shape==='triangle'){
+      if(onCooldown(pid)){
+        // backward 1 in three directions; may capture opponent; may NOT land on opponent gate; may not land on own piece
+        const [r,c]=toRC(i); const cands=[[r-1,c-1],[r-1,c],[r-1,c+1]]; const out=[];
+        for(const [nr,nc] of cands){ if(inBounds(nr,nc)){ const di=idx(nr,nc); if(!isOpponentGateFor('H', di) && !isOwnPieceAt('H', di)) out.push(di); }}
+        return out;
+      } else {
+        // king-like one step, empty only, any direction, except opponent gates
+        return humanTriangleNeighbors(i).filter(di=> !cellOccupied(di) );
+      }
+    }
+    // circle/square as before
+    if(onCooldown(pid)) return [];
+    const [r,c]=toRC(i); const dests=[];
+    const cands=[[r+1,c],[r,c+1],[r,c-1]];
+    for(const [nr,nc] of cands){ if(inBounds(nr,nc)){ const di=idx(nr,nc); if(!cellOccupied(di) && !CPU_GATE_SET.has(di)) dests.push(di); }}
+    return dests;
+  }
+
+  function legalCpuMovesOwn(pid){
+    const p = PIECES.find(x=>x.id===pid); const i=state.pos[pid]; if(i===null) return [];
+    if(p.shape==='blocker'){
+      if(state.blockerCooldown['C']>0) return [];
+      const all=[]; for(let j=0;j<N*N;j++){ if(j!==i && !cellOccupied(j)) all.push(j); } return all;
+    }
+    if(p.shape==='triangle'){
+      if(onCooldown(pid)){
+        // backward 1 in three directions (NE, E, SE); may capture opponent; can't land on opponent gate or own piece
+        const [r,c]=toRC(i); const cands=[[r-1,c+1],[r,c+1],[r+1,c+1]]; const out=[];
+        for(const [nr,nc] of cands){ if(inBounds(nr,nc)){ const di=idx(nr,nc); if(!isOpponentGateFor('C', di) && !isOwnPieceAt('C', di)) out.push(di); }}
+        return out;
+      } else {
+        return cpuTriangleNeighbors(i).filter(di=> !cellOccupied(di) );
+      }
+    }
+    if(onCooldown(pid)) return [];
+    const [r,c]=toRC(i); const dests=[];
+    const cands=[[r-1,c],[r+1,c],[r,c-1]];
+    for(const [nr,nc] of cands){ if(inBounds(nr,nc)){ const di=idx(nr,nc); if(!cellOccupied(di) && !HUMAN_GATE_SET.has(di)) dests.push(di); }}
+    return dests;
+  }
+
+  // Opponent can move your blocker ONLY if it's sitting on their gates
+  function cpuBlockerOnHumanGate(){ const i = state.pos['C_BLK']; return i!==null && HUMAN_GATE_SET.has(i); }
+  function humanBlockerOnCpuGate(){ const i = state.pos['H_BLK']; return i!==null && CPU_GATE_SET.has(i); }
+
+  function legalOppControlBlockerMoves(pid){
+    const i = state.pos[pid]; if(i===null) return [];
+    const moves=[]; for(let j=0;j<N*N;j++){ if(j!==i && !cellOccupied(j)) moves.push(j); }
+    return moves;
+  }
+
+  // Return a piece to its start; if start is occupied, pick nearest free square (avoid opponent gates if possible)
+  function returnToStart(pid){
+    const owner = pid.startsWith('H')?'H':'C';
+    const start = startPos[pid];
+    const oppGateSet = owner==='H'? CPU_GATE_SET : HUMAN_GATE_SET;
+    if(!cellOccupied(start)){ state.pos[pid]=start; return; }
+    const order = Array.from({length:N*N}, (_,i)=>i).sort((a,b)=>{
+      const da = manhattan(a,start) + (oppGateSet.has(a)?1000:0);
+      const db = manhattan(b,start) + (oppGateSet.has(b)?1000:0);
+      return da-db;
+    });
+    for(const i of order){ if(!cellOccupied(i)) { state.pos[pid]=i; return; } }
+    // fallback (shouldn't happen): keep off-board
+    state.pos[pid]=null;
+  }
+
+  // ====== INTERACTION ======
+  let destOverlays=[];
+  function clearHighlights(){ destOverlays.forEach(el=>el.remove()); destOverlays=[]; Object.values(pieceEl).forEach(el=>el.classList.remove('selected')); offBtn.style.display='none'; }
+  function spawnRipple(i){
+    const r = document.createElement('div'); r.className='ripple';
+    const cell = cells[i];
+    r.style.left = (cell.offsetLeft + 6) + 'px';
+    r.style.top  = (cell.offsetTop  + 6) + 'px';
+    r.style.width = `calc(var(--cell) - 12px)`; r.style.height = `calc(var(--cell) - 12px)`;
+    boardEl.appendChild(r); setTimeout(()=> r.remove(), 520);
+  }
+
+  function highlightSelection(pid, controllerSide, oppControl){
+    clearHighlights(); pieceEl[pid] && pieceEl[pid].classList.add('selected');
+    const canOff = (!oppControl && canExit(pid));
+    const moves = oppControl ? legalOppControlBlockerMoves(pid)
+                             : (controllerSide==='H'? legalHumanMovesOwn(pid) : legalCpuMovesOwn(pid));
+    for(const di of moves){
+      const overlay=document.createElement('div'); overlay.className='dest';
+      overlay.style.left=cells[di].offsetLeft+6+'px'; overlay.style.top=cells[di].offsetTop+6+'px';
+      overlay.style.width=`calc(var(--cell) - 12px)`; overlay.style.height=`calc(var(--cell) - 12px)`;
+      overlay.addEventListener('click',()=> makeMove(pid, di, 'step', controllerSide, oppControl));
+      boardEl.appendChild(overlay); destOverlays.push(overlay);
+    }
+    if(canOff){
+      const cell=cells[state.pos[pid]]; const [r,c]=toRC(state.pos[pid]);
+      offBtn.style.display='block'; let x=cell.offsetLeft+8, y=cell.offsetTop-44;
+      if(r===N-1) y=cell.offsetTop+8+(parseFloat(getComputedStyle(cell).height)||0);
+      if(c===0) { x=cell.offsetLeft-60; y=cell.offsetTop+8; }
+      offBtn.style.left=x+'px'; offBtn.style.top=y+'px'; offBtn.onclick=()=> makeMove(pid, null, 'off', controllerSide, false);
+    }
+  }
+
+  function makeMove(pid, dest, kind, controllerSide, oppControl){
+    if(state.over) return;
+    const ownerSide = pid.startsWith('H')? 'H':'C';
+    const from = state.pos[pid];
+
+    if(controllerSide==='C'){
+      const el = pieceEl[pid]; if(el) { el.classList.add('cpu-anim'); setTimeout(()=> el.classList.remove('cpu-anim'), 360); }
+    }
+
+    if(kind==='off'){
+      if(oppControl){ showToast('Illegal OFF'); return; }
+      if(!canExit(pid)){ showToast('Illegal OFF'); return; }
+      const gateIdx = gateFor(pid);
+      state.pos[pid]=null; state.exitGate[pid]=gateIdx;
+      addMoveLine({side:controllerSide, pid, from, to:gateIdx, kind:'off', oppControl:false});
+      if(controllerSide==='C') spawnRipple(gateIdx);
+      if(controllerSide===ownerSide) state.last[controllerSide]=pid;
+    } else if(kind==='step'){
+      let legal = [];
+      if(oppControl){
+        if(!( (controllerSide==='H' && cpuBlockerOnHumanGate() && pid==='C_BLK') || (controllerSide==='C' && humanBlockerOnCpuGate() && pid==='H_BLK') )){
+          showToast('Illegal move'); return;
+        }
+        legal = legalOppControlBlockerMoves(pid);
+      } else {
+        legal = (controllerSide==='H')? legalHumanMovesOwn(pid) : legalCpuMovesOwn(pid);
+      }
+      if(!legal.includes(dest)){ showToast('Illegal move'); return; }
+
+      // Triangle special: backward capture to start
+      let note=null; const movingPiece = PIECES.find(x=>x.id===pid);
+      const occ = findPieceAt(dest);
+      const isTriBackCap = (movingPiece.shape==='triangle' && controllerSide===ownerSide && onCooldown(pid) && isBackwardMove(ownerSide, from, dest) && occ && !occ.startsWith(ownerSide+'_'));
+      state.pos[pid]=dest;
+      if(isTriBackCap){
+        returnToStart(occ);
+        note = `send ${occ} to start`;
+      }
+
+      addMoveLine({side:controllerSide, pid, from, to:dest, kind:'step', oppControl:!!oppControl, note});
+      if(controllerSide==='C') spawnRipple(dest);
+      if(oppControl){ state.blockerCooldown[ownerSide] = 1; }
+      if(!oppControl && controllerSide===ownerSide) state.last[controllerSide]=pid;
+    }
+
+    clearHighlights(); render(); if(checkGameEnd()) return;
+    endOfTurn(controllerSide);
+    state.turn = (state.turn==='H')?'C':'H';
+    updateHistory();
+    if(state.turn==='C') setTimeout(cpuTurn, 260);
+  }
+
+  function endOfTurn(side){ if(state.blockerCooldown[side]>0) state.blockerCooldown[side] -= 1; }
+
+  function sideWon(side){
+    const need = PIECES.filter(p=>p.side===side && p.shape!=='blocker');
+    return need.every(p=> state.pos[p.id]===null );
+  }
+  function checkGameEnd(){
+    if(sideWon('H')){ endGame('Human wins by exiting all non-blocker pieces.'); return true; }
+    if(sideWon('C')){ endGame('CPU wins by exiting all non-blocker pieces.'); return true; }
+    if(threefold()){ endGame('Draw by threefold repetition.'); return true; }
+    return false;
+  }
+  function endGame(msg){ state.over=true; showToast(msg, 1800); }
+
+  // ====== CPU ======
+  function cpuTurn(){
+    if(state.over) return;
+
+    // A) If human blocker is on a CPU gate, relocate it far away immediately.
+    if(humanBlockerOnCpuGate()){
+      const moves = legalOppControlBlockerMoves('H_BLK');
+      const scored = moves.map(d=>({d,score:scoreCpuOppBlockerMove(d)})).sort((a,b)=>b.score-a.score).slice(0,18);
+      if(scored.length){
+        const best = scored[0];
+        makeMove('H_BLK', best.d, 'step', 'C', true);
+        return;
+      }
+    }
+
+    // B) Triangle backward-capture priority (three directions)
+    const triId = 'C_TRI'; const triPos = state.pos[triId];
+    if(triPos!==null && onCooldown(triId)){
+      const [r,c]=toRC(triPos); const cands=[[r-1,c+1],[r,c+1],[r+1,c+1]];
+      for(const [nr,nc] of cands){ if(inBounds(nr,nc)){
+        const di=idx(nr,nc); const occ = findPieceAt(di);
+        if(!isOpponentGateFor('C', di) && occ && occ.startsWith('H_')){
+          makeMove(triId, di, 'step', 'C', false);
+          return;
+        }
+      }}
+    }
+
+    // C) If any Human piece can step onto its gate next turn, try to block that gate
+    const threatGate = imminentHumanGateThreat();
+    if(threatGate!==null && state.blockerCooldown['C']===0){
+      if(!cellOccupied(threatGate)){
+        makeMove('C_BLK', threatGate, 'step', 'C', false);
+        return;
+      }
+    }
+
+    // D) Option generation (throttled blocker movement)
+    const options=[];
+    for(const p of PIECES.filter(p=>p.side==='C')){
+      const id=p.id; const i=state.pos[id]; if(i===null) continue;
+      if(canExit(id)) { options.push({pid:id, kind:'off', controller:'C', oppControl:false, score: 1e9}); continue; }
+
+      // Special handling: only consider free blocker moves if (a) going to a Human gate and
+      // (b) either that gate is currently threatened, or CPU blocker is not already on ANY human gate.
+      if(id==='C_BLK'){
+        const moves = legalCpuMovesOwn(id);
+        const threatGateNow = imminentHumanGateThreat();
+        const cblkPos = state.pos['C_BLK'];
+        const onHumanGate = (cblkPos!==null && HUMAN_GATE_SET.has(cblkPos));
+        let filtered = [];
+        if(threatGateNow!==null){
+          if(moves.includes(threatGateNow)) filtered = [threatGateNow];
+        } else if(!onHumanGate){
+          filtered = moves.filter(d=> HUMAN_GATE_SET.has(d));
+        }
+        for(const d of filtered){
+          // modest score; just enough to compete when relevant
+          options.push({pid:id, kind:'step', dest:d, controller:'C', oppControl:false, score: 2e8});
+        }
+        continue; // do not add roaming blocker moves
+      }
+
+      const moves = legalCpuMovesOwn(id);
+      for(const d of moves){
+        let score = scoreCpuOwnMove(id,d);
+        // Big bonus only for actual backward captures
+        if(id==='C_TRI' && onCooldown(id) && isBackwardMove('C', i, d)){
+          const occ = findPieceAt(d); if(occ && occ.startsWith('H_')) score += 5e8;
+        }
+        options.push({pid:id, kind:'step', dest:d, controller:'C', oppControl:false, score});
+      }
+    }
+
+    if(options.length===0){ endGame('Draw: CPU has no legal moves.'); return; }
+
+    // One-ply heuristic with light reply penalty
+    let bestOption = null; let bestValue = -Infinity;
+    for(const o of options){
+      const base = o.score;
+      const penalty = estimateBestHumanReplyPenalty(o);
+      const val = base - penalty;
+      if(val>bestValue){ bestValue = val; bestOption = o; }
+    }
+
+    makeMove(bestOption.pid, bestOption.dest ?? null, bestOption.kind, bestOption.controller, bestOption.oppControl);
+  }
+
+  function nearestThreatenedHumanGateInfo(){
+    let best = null;
+    for(const shp of ['CIR','SQ','TRI']){
+      const pid = 'H_'+shp;
+      if(state.pos[pid]===null) continue;
+      const gate = gateFor(pid);
+      const d = manhattan(state.pos[pid], gate);
+      if(best===null || d<best.dist){ best = {pid, gate, dist:d}; }
+    }
+    return best;
+  }
+
+  function imminentHumanGateThreat(){
+    for(const shp of ['CIR','SQ','TRI']){
+      const pid = 'H_'+shp; if(state.pos[pid]===null) continue;
+      const gate = gateFor(pid);
+      const legal = legalHumanMovesOwn(pid);
+      if(legal.includes(gate) && !cellOccupied(gate)) return gate;
+    }
+    return null;
+  }
+
+  function scoreCpuOwnMove(pid, dest){
+    const p = PIECES.find(x=>x.id===pid);
+    if(p.shape==='blocker'){
+      if(CPU_GATE_SET.has(dest)) return -10000;
+      let score = 0;
+      if(HUMAN_GATE_SET.has(dest)) score += 400;
+      const threat = nearestThreatenedHumanGateInfo();
+      if(threat){
+        if(dest===threat.gate){
+          if(threat.dist<=1) score += 1200; else if(threat.dist<=3) score += 700; else score += 350;
+        } else {
+          score += Math.max(0, 200 - manhattan(dest, threat.gate)*40);
+        }
+      }
+      let near = 0; for(const g of Object.values(HUMAN_GATES)){ near += Math.max(0, 10 - manhattan(dest,g)); }
+      score += near*12;
+      return score;
+    }
+    const gate = gateFor(pid); const dist = manhattan(dest, gate);
+    let s = 1200 - dist*60;
+    s += (5 - toRC(dest)[1])*8;
+    return s;
+  }
+
+  function scoreCpuOppBlockerMove(dest){
+    let s = 0; if(CPU_GATE_SET.has(dest)) s -= 2000; let sum=0; for(const g of Object.values(CPU_GATES)){ sum += manhattan(dest,g); } s += sum*20; return s;
+  }
+
+  // --- Lightweight snapshot/restore for lookahead ---
+  function snapshotState(){
+    return {
+      pos: {...state.pos},
+      turn: state.turn,
+      last: {...state.last},
+      blockerCooldown: {...state.blockerCooldown},
+      over: state.over,
+      exitGate: {...state.exitGate}
+    };
+  }
+  function restoreStateSnapshot(snap){
+    state.pos = {...snap.pos};
+    state.turn = snap.turn;
+    state.last = {...snap.last};
+    state.blockerCooldown = {...snap.blockerCooldown};
+    state.over = snap.over;
+    state.exitGate = {...snap.exitGate};
+  }
+
+  function applyOptionToState(o, controller){
+    const owner = o.pid.startsWith('H')? 'H':'C';
+    if(o.kind==='off'){
+      const gate = gateFor(o.pid); state.pos[o.pid]=null; state.exitGate[o.pid]=gate; if(controller===owner) state.last[controller]=o.pid;
+    } else {
+      state.pos[o.pid]=o.dest; if(o.oppControl){ state.blockerCooldown[owner]=1; } if(controller===owner) state.last[controller]=o.pid;
+    }
+  }
+
+  function enumerateHumanRepliesTrimmed(){
+    const replies=[];
+    if(cpuBlockerOnHumanGate()){
+      const mv = legalOppControlBlockerMoves('C_BLK');
+      const scored = mv.map(d=>({d,score: -manhattan(d, HUMAN_GATES.green) - manhattan(d, HUMAN_GATES.orange) - manhattan(d, HUMAN_GATES.purple)}))
+                       .sort((a,b)=>a.score-b.score).slice(0,12);
+      for(const s of scored){ replies.push({pid:'C_BLK', kind:'step', dest:s.d, controller:'H', oppControl:true}); }
+    }
+    for(const p of PIECES.filter(p=>p.side==='H')){
+      const id=p.id; const i=state.pos[id]; if(i===null) continue;
+      if(canExit(id)) { replies.push({pid:id, kind:'off', controller:'H', oppControl:false}); continue; }
+      const moves = legalHumanMovesOwn(id);
+      for(const d of moves){ replies.push({pid:id, kind:'step', dest:d, controller:'H', oppControl:false}); }
+    }
+    return replies;
+  }
+
+  function estimateBestHumanReplyPenalty(option){
+    const backup = snapshotState();
+    applyOptionToState(option, 'C');
+    const replies = enumerateHumanRepliesTrimmed();
+    let worst = -Infinity; // human wants to maximize this value
+    for(const r of replies){
+      applyOptionToState(r, 'H');
+      const ev = boardEvalForCpu();
+      if(ev>worst) worst = ev;
+      restoreStateSnapshot(backup);
+      applyOptionToState(option, 'C');
+    }
+    restoreStateSnapshot(backup);
+    return Math.max(0, worst);
+  }
+
+  function boardEvalForCpu(){
+    let cpuDist = 0, humDist = 0;
+    for(const shp of ['CIR','SQ','TRI']){
+      const cpid='C_'+shp, hpid='H_'+shp;
+      if(state.pos[cpid]!==null){ cpuDist += manhattan(state.pos[cpid], gateFor(cpid)); }
+      if(state.pos[hpid]!==null){ humDist += (10 - Math.min(10, manhattan(state.pos[hpid], gateFor(hpid)))); }
+    }
+    let score = humDist - (30 - Math.min(30,cpuDist));
+    const hGateThreat = imminentHumanGateThreat(); if(hGateThreat!==null) score += 30;
+    if(cpuBlockerOnHumanGate()) score -= 25; if(humanBlockerOnCpuGate()) score += 25;
+    return score;
+  }
+
+  // ====== WIRES ======
+  resetBtn.addEventListener('click', reset);
+  window.addEventListener('resize', ()=>{ render(); clearHighlights(); });
+
+  // initial render
+  render();
+  reset();
+})();
+</script>
+</body>
+</html>
