@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Gateways — Game of Science (6x6 • coords + history • dark, v3.4)</title>
+<title>THE GAME</title>
 <style>
   :root{
     --board-size: 620px;
@@ -86,10 +86,10 @@
   .shape-triangle{clip-path: polygon(50% 8%, 92% 92%, 8% 92%)}
   .shape-diamond{clip-path: polygon(50% 6%, 94% 50%, 50% 94%, 6% 50%)}
 
-  .dest{position:absolute;border-radius:12px;border:3px dashed var(--hl);background:rgba(34,211,238,.08);cursor:pointer}
+  .dest{position:absolute;border-radius:12px;border:3px dashed var(--hl);background:rgba(34,211,238,.08);cursor:pointer; z-index:50}
   .dest:hover{background:rgba(34,211,238,.16)}
 
-  .off-btn{position:absolute;z-index:20;padding:8px 10px;border-radius:10px;border:none;background:var(--accent);color:#001018;font-weight:800;cursor:pointer;box-shadow:0 6px 16px rgba(34,211,238,.35)}
+  .off-btn{position:absolute;z-index:60;padding:8px 10px;border-radius:10px;border:none;background:var(--accent);color:#001018;font-weight:800;cursor:pointer;box-shadow:0 6px 16px rgba(34,211,238,.35)}
 
   .panel{background:var(--panel);border:1px solid var(--panel-border);border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.4);padding:16px;display:flex;flex-direction:column;gap:12px}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -109,7 +109,7 @@
 
   /* Ripple marker for CPU moves */
   @keyframes ripple{0%{transform:scale(.85);opacity:.9}100%{transform:scale(1.12);opacity:0}}
-  .ripple{position:absolute;border:2px solid var(--accent);border-radius:12px;opacity:.85;animation:ripple .5s ease-out forwards;pointer-events:none}
+  .ripple{position:absolute;border:2px solid var(--accent);border-radius:12px;opacity:.85;animation:ripple .5s ease-out forwards;pointer-events:none; z-index:40}
 </style>
 </head>
 <body>
@@ -214,12 +214,12 @@
   const PIECES = [
     {id:'H_CIR', side:'H', shape:'circle'},
     {id:'H_SQ',  side:'H', shape:'square'},
-    {id:'H_TRI', side:'H', shape:'triangle'}, // NEW: king-like; on cooldown only backward (3 dirs); backward capture -> send to start
+    {id:'H_TRI', side:'H', shape:'triangle'}, // king-like; on cooldown only backward (3 dirs); backward capture -> send to start
     {id:'H_BLK', side:'H', shape:'blocker'},
 
     {id:'C_CIR', side:'C', shape:'circle'},
     {id:'C_SQ',  side:'C', shape:'square'},
-    {id:'C_TRI', side:'C', shape:'triangle'}, // NEW symmetric
+    {id:'C_TRI', side:'C', shape:'triangle'},
     {id:'C_BLK', side:'C', shape:'blocker'}
   ];
 
@@ -236,7 +236,8 @@
     blockerCooldown: {H:0, C:0}, // imposed when opponent relocates your blocker off a gate
     history: new Map(),
     over: false,
-    exitGate: Object.fromEntries(PIECES.map(p=>[p.id, null])) // remember where each piece exited
+    exitGate: Object.fromEntries(PIECES.map(p=>[p.id, null])), // where it exited
+    moveNum: 0 // total half-moves made
   };
 
   const pieceEl = Object.fromEntries(PIECES.map(p=>[p.id, mkPiece(p)]));
@@ -276,11 +277,8 @@
     const pieceW = (boardEl.clientWidth/6) - 12;
     let left = cell.offsetLeft + 6;
     let top  = cell.offsetTop  + 6;
-    if(r===N-1){ // south edge -> below
-      top = cell.offsetTop + (boardEl.clientHeight/6) + 12;
-    } else if(c===0){ // west edge -> left
-      left = cell.offsetLeft - pieceW - 12;
-    }
+    if(r===N-1){ top = cell.offsetTop + (boardEl.clientHeight/6) + 12; }
+    else if(c===0){ left = cell.offsetLeft - pieceW - 12; }
     el.style.left = left + 'px';
     el.style.top  = top  + 'px';
     el.style.width = `calc(var(--cell) - 12px)`;
@@ -322,11 +320,8 @@
     const sym = document.createElement('span'); sym.className=`sym ${side==='H'?'h':'c'}`; sym.textContent = SHAPE_SYM[p.shape];
     const who = document.createElement('span'); who.className='who'; who.textContent = side==='H'?'H':'CPU';
     const path = document.createElement('span'); path.className='path';
-    if(kind==='off'){
-      path.textContent = `${coord(from)} → OFF`;
-    } else {
-      path.textContent = `${coord(from)} → ${coord(to)}` + (oppControl? ' (opp blocker)' : '');
-    }
+    if(kind==='off') path.textContent = `${coord(from)} → OFF`;
+    else path.textContent = `${coord(from)} → ${coord(to)}` + (oppControl? ' (opp blocker)' : '');
     if(note){ const n=document.createElement('span'); n.style.marginLeft='6px'; n.style.color='#a7f3d0'; n.textContent = `• ${note}`; line.appendChild(n); }
     line.appendChild(sym); line.appendChild(who); line.appendChild(path);
     movesEl.appendChild(line);
@@ -335,19 +330,14 @@
 
   function positionKey(){
     const arr = PIECES.map(p=> state.pos[p.id]===null? 'x' : String(state.pos[p.id]));
-    return [
-      arr.join(','),
-      state.turn,
-      state.last.H||'_', state.last.C||'_',
-      state.blockerCooldown.H||0, state.blockerCooldown.C||0
-    ].join('|');
+    return [arr.join(','), state.turn, state.last.H||'_', state.last.C||'_', state.blockerCooldown.H||0, state.blockerCooldown.C||0].join('|');
   }
   function updateHistory(){ const k=positionKey(); state.history.set(k,(state.history.get(k)||0)+1); }
   function threefold(){ const k=positionKey(); return (state.history.get(k)||0)>=3; }
 
   function reset(){
     Object.keys(state.pos).forEach(id=> state.pos[id]=startPos[id]);
-    state.last={H:null,C:null}; state.blockerCooldown={H:0,C:0}; state.history=new Map(); state.over=false;
+    state.last={H:null,C:null}; state.blockerCooldown={H:0,C:0}; state.history=new Map(); state.over=false; state.moveNum=0;
     state.exitGate = Object.fromEntries(PIECES.map(p=>[p.id, null]));
     state.turn = Math.random() < 0.5 ? 'H' : 'C';
     offBtn.style.display='none'; clearHighlights(); movesEl.innerHTML=''; render();
@@ -381,11 +371,8 @@
   // Backward now includes three directions
   function isBackwardMove(side, from, to){
     const [r,c]=toRC(from), [nr,nc]=toRC(to);
-    if(side==='H'){
-      return (nr===r-1 && (nc===c-1 || nc===c || nc===c+1));
-    } else {
-      return (nc===c+1 && (nr===r-1 || nr===r || nr===r+1));
-    }
+    if(side==='H') return (nr===r-1 && (nc===c-1 || nc===c || nc===c+1));
+    return (nc===c+1 && (nr===r-1 || nr===r || nr===r+1));
   }
 
   function humanTriangleNeighbors(i){
@@ -475,8 +462,7 @@
       return da-db;
     });
     for(const i of order){ if(!cellOccupied(i)) { state.pos[pid]=i; return; } }
-    // fallback (shouldn't happen): keep off-board
-    state.pos[pid]=null;
+    state.pos[pid]=null; // fallback
   }
 
   // ====== INTERACTION ======
@@ -546,10 +532,7 @@
       const occ = findPieceAt(dest);
       const isTriBackCap = (movingPiece.shape==='triangle' && controllerSide===ownerSide && onCooldown(pid) && isBackwardMove(ownerSide, from, dest) && occ && !occ.startsWith(ownerSide+'_'));
       state.pos[pid]=dest;
-      if(isTriBackCap){
-        returnToStart(occ);
-        note = `send ${occ} to start`;
-      }
+      if(isTriBackCap){ returnToStart(occ); note = `send ${occ} to start`; }
 
       addMoveLine({side:controllerSide, pid, from, to:dest, kind:'step', oppControl:!!oppControl, note});
       if(controllerSide==='C') spawnRipple(dest);
@@ -560,6 +543,7 @@
     clearHighlights(); render(); if(checkGameEnd()) return;
     endOfTurn(controllerSide);
     state.turn = (state.turn==='H')?'C':'H';
+    state.moveNum += 1;
     updateHistory();
     if(state.turn==='C') setTimeout(cpuTurn, 260);
   }
@@ -578,7 +562,144 @@
   }
   function endGame(msg){ state.over=true; showToast(msg, 1800); }
 
-  // ====== CPU ======
+  // ====== CPU & AI ======
+  // Stronger search: depth-4 iterative deepening with alpha-beta, beam ordering,
+  // transposition table, killer-move ordering, and light randomness to avoid
+  // deterministic play. Time-bounded per move.
+  const AI = { MAX_DEPTH: 4, TIME_MS: 140, BEAM: 14 };
+  const TT = new Map(); // transposition table
+  const killers = Array.from({length: 16}, ()=> []); // killer moves per ply
+
+  function jitter(range=0.2){ return (Math.random()*2-1)*range; }
+
+  function moveToKey(o){
+    if(!o) return '';
+    return [o.pid,o.kind,o.dest??'off',o.oppControl?1:0,o.controller].join(':');
+  }
+
+  function enumerateSideOptions(side){
+    const opts=[];
+    const canOppMoveBlocker = side==='H' ? cpuBlockerOnHumanGate() : humanBlockerOnCpuGate();
+    if(canOppMoveBlocker){
+      const pid = side==='H'? 'C_BLK' : 'H_BLK';
+      const mv = legalOppControlBlockerMoves(pid);
+      for(const d of mv){ opts.push({pid, kind:'step', dest:d, controller:side, oppControl:true}); }
+    }
+    for(const p of PIECES.filter(p=>p.side===side)){
+      const id=p.id; const i=state.pos[id]; if(i===null) continue;
+      if(canExit(id)) { opts.push({pid:id, kind:'off', controller:side, oppControl:false}); continue; }
+      const moves = side==='H'? legalHumanMovesOwn(id) : legalCpuMovesOwn(id);
+      for(const d of moves){ opts.push({pid:id, kind:'step', dest:d, controller:side, oppControl:false}); }
+    }
+    return opts;
+  }
+
+  function evalForCpu(){
+    // Higher is better for CPU
+    let cpuProgress = 0, humProgress = 0, mobility=0, cdPain=0, laneClash=0;
+    for(const shp of ['CIR','SQ','TRI']){
+      const cpid='C_'+shp, hpid='H_'+shp;
+      if(state.pos[cpid]!==null){ cpuProgress += (10 - Math.min(10, manhattan(state.pos[cpid], gateFor(cpid))));
+        mobility += (enumerateSideOptions('C').length/20); // rough mobility proxy
+        if(onCooldown(cpid)) cdPain -= 0.6; }
+      if(state.pos[hpid]!==null){ humProgress += (10 - Math.min(10, manhattan(state.pos[hpid], gateFor(hpid))));
+        if(onCooldown(hpid)) cdPain += 0.4; }
+    }
+    // discourage piling on same file for CPU pieces (simple lane clash)
+    const files = new Map();
+    for(const id of ['C_CIR','C_SQ','C_TRI']){ if(state.pos[id]!==null){ const [,c]=toRC(state.pos[id]); files.set(c,(files.get(c)||0)+1); }}
+    for(const v of files.values()){ if(v>1) laneClash -= (v-1)*0.6; }
+
+    let score = (cpuProgress - humProgress) + mobility + cdPain + laneClash;
+    if(cpuBlockerOnHumanGate()) score += 6; // gate control
+    if(humanBlockerOnCpuGate()) score -= 8;
+    const hThreat = imminentHumanGateThreat(); if(hThreat!==null) score -= 10;
+    if(state.moveNum < 6){ // early development
+      for(const id of ['C_SQ','C_CIR']){ if(state.pos[id]!==null && state.pos[id]!==startPos[id]) score += 1.5; }
+    }
+    return score + jitter(0.15);
+  }
+
+  function snapshotState(){
+    return { pos: {...state.pos}, turn: state.turn, last: {...state.last}, blockerCooldown: {...state.blockerCooldown}, over: state.over, exitGate: {...state.exitGate}, moveNum: state.moveNum };
+  }
+  function restoreStateSnapshot(snap){
+    state.pos = {...snap.pos}; state.turn = snap.turn; state.last = {...snap.last}; state.blockerCooldown = {...snap.blockerCooldown}; state.over = snap.over; state.exitGate = {...snap.exitGate}; state.moveNum = snap.moveNum;
+  }
+
+  function applyOptionToState(o){
+    const owner = o.pid.startsWith('H')? 'H':'C';
+    if(o.kind==='off'){
+      const gate = gateFor(o.pid); state.pos[o.pid]=null; state.exitGate[o.pid]=gate; if(o.controller===owner) state.last[o.controller]=o.pid;
+    } else {
+      const from = state.pos[o.pid]; state.pos[o.pid]=o.dest; if(o.oppControl){ state.blockerCooldown[owner]=1; } if(o.controller===owner) state.last[o.controller]=o.pid;
+      // triangle backward capture in simulation too
+      const movingPiece = PIECES.find(x=>x.id===o.pid);
+      if(movingPiece.shape==='triangle' && o.controller===owner && onCooldown(o.pid) && isBackwardMove(owner, from, o.dest)){
+        const occ = findPieceAt(o.dest); if(occ && !occ.startsWith(owner+'_')){ returnToStart(occ); }
+      }
+    }
+    state.turn = (state.turn==='H')?'C':'H'; state.moveNum += 1;
+  }
+
+  function shallowScore(o, side){
+    // quick approximate value to order moves
+    const owner = o.pid.startsWith('H')? 'H':'C';
+    if(o.kind==='off') return side==='C'? 1200 : -1200;
+    // triangle backward capture gets a boost
+    if(o.pid==='C_TRI' && side==='C' && onCooldown('C_TRI') && isBackwardMove('C', state.pos['C_TRI'], o.dest)){
+      const occ = findPieceAt(o.dest); if(occ && occ.startsWith('H_')) return 800;
+    }
+    if(o.pid==='H_TRI' && side==='H' && onCooldown('H_TRI') && isBackwardMove('H', state.pos['H_TRI'], o.dest)){
+      const occ = findPieceAt(o.dest); if(occ && occ.startsWith('C_')) return -700; // dangerous for CPU
+    }
+    const gate = gateFor(o.pid);
+    if(gate!==null){
+      const d0 = manhattan(state.pos[o.pid], gate);
+      const d1 = manhattan(o.dest ?? state.pos[o.pid], gate);
+      const delta = d0 - d1; return (owner==='C'? 11: -11) * delta;
+    }
+    if(o.pid==='C_BLK'){ return HUMAN_GATE_SET.has(o.dest) ? 8 : 0; }
+    return 0;
+  }
+
+  function ttKey(depth, side){ return positionKey()+`|d${depth}|${side}`; }
+
+  function alphaBeta(depth, alpha, beta, sideToMove, ply, deadline){
+    if(performance.now() > deadline){ return {val: evalForCpu(), cutoff:true}; }
+    if(depth===0){ return {val: evalForCpu(), cutoff:false}; }
+    if(sideWon('C')) return {val: 1e6, cutoff:false};
+    if(sideWon('H')) return {val:-1e6, cutoff:false};
+
+    const key = ttKey(depth, sideToMove);
+    if(TT.has(key)){ const e=TT.get(key); if(e.depth>=depth) return {val:e.val, cutoff:false}; }
+
+    // generate & order
+    let moves = enumerateSideOptions(sideToMove);
+    const ordered = moves.map(o=> ({o, s: shallowScore(o, sideToMove)}));
+    // killer heuristic
+    const ks = killers[ply] || [];
+    for(const k of ks){ const i = ordered.findIndex(x=> moveToKey(x.o)===k); if(i>0){ const t=ordered[i]; ordered.splice(i,1); ordered.unshift(t); } }
+    ordered.sort((a,b)=> sideToMove==='C' ? b.s - a.s : a.s - b.s);
+    const beam = ordered.slice(0, AI.BEAM).map(x=>x.o);
+
+    if(sideToMove==='C'){
+      let best = -Infinity; let bestMove=null;
+      for(const m of beam){ const snap=snapshotState(); applyOptionToState(m); const res=alphaBeta(depth-1, alpha, beta, 'H', ply+1, deadline); restoreStateSnapshot(snap); if(res.cutoff) return {val:res.val, cutoff:true}; const val=res.val; if(val>best){ best=val; bestMove=m; } if(best>alpha) alpha=best; if(alpha>=beta){ // beta cutoff
+          killers[ply] = [moveToKey(m), ...(killers[ply]||[])].slice(0,2);
+          break; }
+      }
+      TT.set(key,{val:best, depth});
+      return {val:best, move:bestMove, cutoff:false};
+    } else {
+      let best = Infinity; let bestMove=null;
+      for(const m of beam){ const snap=snapshotState(); applyOptionToState(m); const res=alphaBeta(depth-1, alpha, beta, 'C', ply+1, deadline); restoreStateSnapshot(snap); if(res.cutoff) return {val:res.val, cutoff:true}; const val=res.val; if(val<best){ best=val; bestMove=m; } if(best<beta) beta=best; if(alpha>=beta){ killers[ply] = [moveToKey(m), ...(killers[ply]||[])].slice(0,2); break; }
+      }
+      TT.set(key,{val:best, depth});
+      return {val:best, move:bestMove, cutoff:false};
+    }
+  }
+
   function cpuTurn(){
     if(state.over) return;
 
@@ -586,11 +707,7 @@
     if(humanBlockerOnCpuGate()){
       const moves = legalOppControlBlockerMoves('H_BLK');
       const scored = moves.map(d=>({d,score:scoreCpuOppBlockerMove(d)})).sort((a,b)=>b.score-a.score).slice(0,18);
-      if(scored.length){
-        const best = scored[0];
-        makeMove('H_BLK', best.d, 'step', 'C', true);
-        return;
-      }
+      if(scored.length){ const best = scored[0]; makeMove('H_BLK', best.d, 'step', 'C', true); return; }
     }
 
     // B) Triangle backward-capture priority (three directions)
@@ -599,197 +716,75 @@
       const [r,c]=toRC(triPos); const cands=[[r-1,c+1],[r,c+1],[r+1,c+1]];
       for(const [nr,nc] of cands){ if(inBounds(nr,nc)){
         const di=idx(nr,nc); const occ = findPieceAt(di);
-        if(!isOpponentGateFor('C', di) && occ && occ.startsWith('H_')){
-          makeMove(triId, di, 'step', 'C', false);
-          return;
-        }
+        if(!isOpponentGateFor('C', di) && occ && occ.startsWith('H_')){ makeMove(triId, di, 'step', 'C', false); return; }
       }}
     }
 
-    // C) If any Human piece can step onto its gate next turn, try to block that gate
-    const threatGate = imminentHumanGateThreat();
-    if(threatGate!==null && state.blockerCooldown['C']===0){
-      if(!cellOccupied(threatGate)){
-        makeMove('C_BLK', threatGate, 'step', 'C', false);
-        return;
-      }
-    }
-
-    // D) Option generation (throttled blocker movement)
-    const options=[];
+    // C) Build candidate root options with throttled blocker behavior
+    let options=[];
     for(const p of PIECES.filter(p=>p.side==='C')){
       const id=p.id; const i=state.pos[id]; if(i===null) continue;
-      if(canExit(id)) { options.push({pid:id, kind:'off', controller:'C', oppControl:false, score: 1e9}); continue; }
-
-      // Special handling: only consider free blocker moves if (a) going to a Human gate and
-      // (b) either that gate is currently threatened, or CPU blocker is not already on ANY human gate.
+      if(canExit(id)) { options.push({pid:id, kind:'off', controller:'C', oppControl:false}); continue; }
       if(id==='C_BLK'){
         const moves = legalCpuMovesOwn(id);
         const threatGateNow = imminentHumanGateThreat();
         const cblkPos = state.pos['C_BLK'];
         const onHumanGate = (cblkPos!==null && HUMAN_GATE_SET.has(cblkPos));
         let filtered = [];
-        if(threatGateNow!==null){
-          if(moves.includes(threatGateNow)) filtered = [threatGateNow];
-        } else if(!onHumanGate){
-          filtered = moves.filter(d=> HUMAN_GATE_SET.has(d));
-        }
-        for(const d of filtered){
-          // modest score; just enough to compete when relevant
-          options.push({pid:id, kind:'step', dest:d, controller:'C', oppControl:false, score: 2e8});
-        }
-        continue; // do not add roaming blocker moves
+        if(threatGateNow!==null){ if(moves.includes(threatGateNow)) filtered = [threatGateNow]; }
+        else if(!onHumanGate){ filtered = moves.filter(d=> HUMAN_GATE_SET.has(d)); if(state.moveNum < 2 && Math.random()<0.5) filtered = []; }
+        for(const d of filtered){ options.push({pid:id, kind:'step', dest:d, controller:'C', oppControl:false}); }
+        continue; // no roaming blocker
       }
-
       const moves = legalCpuMovesOwn(id);
-      for(const d of moves){
-        let score = scoreCpuOwnMove(id,d);
-        // Big bonus only for actual backward captures
-        if(id==='C_TRI' && onCooldown(id) && isBackwardMove('C', i, d)){
-          const occ = findPieceAt(d); if(occ && occ.startsWith('H_')) score += 5e8;
-        }
-        options.push({pid:id, kind:'step', dest:d, controller:'C', oppControl:false, score});
-      }
+      for(const d of moves){ options.push({pid:id, kind:'step', dest:d, controller:'C', oppControl:false}); }
     }
 
     if(options.length===0){ endGame('Draw: CPU has no legal moves.'); return; }
 
-    // One-ply heuristic with light reply penalty
-    let bestOption = null; let bestValue = -Infinity;
-    for(const o of options){
-      const base = o.score;
-      const penalty = estimateBestHumanReplyPenalty(o);
-      const val = base - penalty;
-      if(val>bestValue){ bestValue = val; bestOption = o; }
+    // D) Iterative deepening search with time budget
+    const start = (performance.now?performance.now():Date.now());
+    const deadline = start + AI.TIME_MS;
+    TT.clear(); killers.forEach((_,i)=> killers[i]=[]);
+
+    let bestOverall = null; let bestVal = -Infinity; let depthReached = 1;
+    // light shuffle to avoid deterministic ties
+    options.sort(()=> Math.random()-0.5);
+
+    for(let d=2; d<=AI.MAX_DEPTH; d++){
+      let localBest = null; let localBestVal = -Infinity;
+      for(const o of options){
+        const snap=snapshotState(); applyOptionToState(o);
+        const res = alphaBeta(d-1, -Infinity, Infinity, 'H', 0, deadline);
+        restoreStateSnapshot(snap);
+        if(res.cutoff){ break; }
+        const v = res.val;
+        if(v>localBestVal + 1e-9){ localBestVal=v; localBest=o; }
+        else if(Math.abs(v-localBestVal) < 0.15 && Math.random()<0.35){ localBest=o; localBestVal=v; }
+      }
+      if(localBest){ bestOverall = localBest; bestVal = localBestVal; depthReached = d; }
+      if((performance.now?performance.now():Date.now()) > deadline) break;
     }
 
-    makeMove(bestOption.pid, bestOption.dest ?? null, bestOption.kind, bestOption.controller, bestOption.oppControl);
+    const chosen = bestOverall || options[0];
+    makeMove(chosen.pid, chosen.dest ?? null, chosen.kind, chosen.controller, chosen.oppControl);
   }
 
   function nearestThreatenedHumanGateInfo(){
     let best = null;
     for(const shp of ['CIR','SQ','TRI']){
-      const pid = 'H_'+shp;
-      if(state.pos[pid]===null) continue;
-      const gate = gateFor(pid);
-      const d = manhattan(state.pos[pid], gate);
-      if(best===null || d<best.dist){ best = {pid, gate, dist:d}; }
+      const pid = 'H_'+shp; if(state.pos[pid]===null) continue; const gate = gateFor(pid); const d = manhattan(state.pos[pid], gate); if(best===null || d<best.dist){ best = {pid, gate, dist:d}; }
     }
     return best;
   }
 
   function imminentHumanGateThreat(){
     for(const shp of ['CIR','SQ','TRI']){
-      const pid = 'H_'+shp; if(state.pos[pid]===null) continue;
-      const gate = gateFor(pid);
-      const legal = legalHumanMovesOwn(pid);
-      if(legal.includes(gate) && !cellOccupied(gate)) return gate;
-    }
+      const pid = 'H_'+shp; if(state.pos[pid]===null) continue; const gate = gateFor(pid); const legal = legalHumanMovesOwn(pid); if(legal.includes(gate) && !cellOccupied(gate)) return gate; }
     return null;
   }
 
-  function scoreCpuOwnMove(pid, dest){
-    const p = PIECES.find(x=>x.id===pid);
-    if(p.shape==='blocker'){
-      if(CPU_GATE_SET.has(dest)) return -10000;
-      let score = 0;
-      if(HUMAN_GATE_SET.has(dest)) score += 400;
-      const threat = nearestThreatenedHumanGateInfo();
-      if(threat){
-        if(dest===threat.gate){
-          if(threat.dist<=1) score += 1200; else if(threat.dist<=3) score += 700; else score += 350;
-        } else {
-          score += Math.max(0, 200 - manhattan(dest, threat.gate)*40);
-        }
-      }
-      let near = 0; for(const g of Object.values(HUMAN_GATES)){ near += Math.max(0, 10 - manhattan(dest,g)); }
-      score += near*12;
-      return score;
-    }
-    const gate = gateFor(pid); const dist = manhattan(dest, gate);
-    let s = 1200 - dist*60;
-    s += (5 - toRC(dest)[1])*8;
-    return s;
-  }
-
-  function scoreCpuOppBlockerMove(dest){
-    let s = 0; if(CPU_GATE_SET.has(dest)) s -= 2000; let sum=0; for(const g of Object.values(CPU_GATES)){ sum += manhattan(dest,g); } s += sum*20; return s;
-  }
-
-  // --- Lightweight snapshot/restore for lookahead ---
-  function snapshotState(){
-    return {
-      pos: {...state.pos},
-      turn: state.turn,
-      last: {...state.last},
-      blockerCooldown: {...state.blockerCooldown},
-      over: state.over,
-      exitGate: {...state.exitGate}
-    };
-  }
-  function restoreStateSnapshot(snap){
-    state.pos = {...snap.pos};
-    state.turn = snap.turn;
-    state.last = {...snap.last};
-    state.blockerCooldown = {...snap.blockerCooldown};
-    state.over = snap.over;
-    state.exitGate = {...snap.exitGate};
-  }
-
-  function applyOptionToState(o, controller){
-    const owner = o.pid.startsWith('H')? 'H':'C';
-    if(o.kind==='off'){
-      const gate = gateFor(o.pid); state.pos[o.pid]=null; state.exitGate[o.pid]=gate; if(controller===owner) state.last[controller]=o.pid;
-    } else {
-      state.pos[o.pid]=o.dest; if(o.oppControl){ state.blockerCooldown[owner]=1; } if(controller===owner) state.last[controller]=o.pid;
-    }
-  }
-
-  function enumerateHumanRepliesTrimmed(){
-    const replies=[];
-    if(cpuBlockerOnHumanGate()){
-      const mv = legalOppControlBlockerMoves('C_BLK');
-      const scored = mv.map(d=>({d,score: -manhattan(d, HUMAN_GATES.green) - manhattan(d, HUMAN_GATES.orange) - manhattan(d, HUMAN_GATES.purple)}))
-                       .sort((a,b)=>a.score-b.score).slice(0,12);
-      for(const s of scored){ replies.push({pid:'C_BLK', kind:'step', dest:s.d, controller:'H', oppControl:true}); }
-    }
-    for(const p of PIECES.filter(p=>p.side==='H')){
-      const id=p.id; const i=state.pos[id]; if(i===null) continue;
-      if(canExit(id)) { replies.push({pid:id, kind:'off', controller:'H', oppControl:false}); continue; }
-      const moves = legalHumanMovesOwn(id);
-      for(const d of moves){ replies.push({pid:id, kind:'step', dest:d, controller:'H', oppControl:false}); }
-    }
-    return replies;
-  }
-
-  function estimateBestHumanReplyPenalty(option){
-    const backup = snapshotState();
-    applyOptionToState(option, 'C');
-    const replies = enumerateHumanRepliesTrimmed();
-    let worst = -Infinity; // human wants to maximize this value
-    for(const r of replies){
-      applyOptionToState(r, 'H');
-      const ev = boardEvalForCpu();
-      if(ev>worst) worst = ev;
-      restoreStateSnapshot(backup);
-      applyOptionToState(option, 'C');
-    }
-    restoreStateSnapshot(backup);
-    return Math.max(0, worst);
-  }
-
-  function boardEvalForCpu(){
-    let cpuDist = 0, humDist = 0;
-    for(const shp of ['CIR','SQ','TRI']){
-      const cpid='C_'+shp, hpid='H_'+shp;
-      if(state.pos[cpid]!==null){ cpuDist += manhattan(state.pos[cpid], gateFor(cpid)); }
-      if(state.pos[hpid]!==null){ humDist += (10 - Math.min(10, manhattan(state.pos[hpid], gateFor(hpid)))); }
-    }
-    let score = humDist - (30 - Math.min(30,cpuDist));
-    const hGateThreat = imminentHumanGateThreat(); if(hGateThreat!==null) score += 30;
-    if(cpuBlockerOnHumanGate()) score -= 25; if(humanBlockerOnCpuGate()) score += 25;
-    return score;
-  }
+  function scoreCpuOppBlockerMove(dest){ let s = 0; if(CPU_GATE_SET.has(dest)) s -= 2000; let sum=0; for(const g of Object.values(CPU_GATES)){ sum += manhattan(dest,g); } s += sum*20; return s; }
 
   // ====== WIRES ======
   resetBtn.addEventListener('click', reset);
